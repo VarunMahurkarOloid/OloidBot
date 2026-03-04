@@ -223,8 +223,11 @@ class UserStore:
 
     def _save(self):
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
-        with open(self._path, "w") as f:
+        # Atomic write: write to temp file, then rename to prevent corruption
+        tmp_path = self._path + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(self._data, f, indent=2)
+        os.replace(tmp_path, self._path)
 
 
 # Singleton

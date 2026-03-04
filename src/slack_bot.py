@@ -213,7 +213,7 @@ def _resolve_user_name(uid: str, cache: dict) -> str:
         data = resp.data if hasattr(resp, "data") else resp
         user_obj = data.get("user") or {}
         profile = user_obj.get("profile") or {}
-        logger.info(
+        logger.debug(
             "Resolving %s: real_name=%r, display_name=%r, name=%r",
             uid,
             profile.get("real_name"),
@@ -236,7 +236,7 @@ def _resolve_user_name(uid: str, cache: dict) -> str:
 
     name = name or uid
     cache[uid] = name
-    logger.info("Resolved %s → %s", uid, name)
+    logger.debug("Resolved %s → %s", uid, name)
     return name
 
 
@@ -259,10 +259,10 @@ def _fetch_slack_summary(client: WebClient, user_id: str, days: int) -> dict:
     # Use user token if available, otherwise fall back to bot token
     if settings.slack_user_token:
         api_client = WebClient(token=settings.slack_user_token)
-        logger.info("ease-my-life: using user token")
+        logger.debug("ease-my-life: using user token")
     else:
         api_client = client
-        logger.info("ease-my-life: no user token, using bot token (limited access)")
+        logger.debug("ease-my-life: no user token, using bot token (limited access)")
 
     oldest_ts = int(time.time() - days * 86400)
     mentions = []
@@ -290,7 +290,7 @@ def _fetch_slack_summary(client: WebClient, user_id: str, days: int) -> dict:
         except Exception as e:
             logger.warning("Failed to list channels (type=%s): %s", ch_type, e)
 
-    logger.info("ease-my-life: found %d channels total", len(all_channels))
+    logger.debug("ease-my-life: found %d channels total", len(all_channels))
 
     for ch in all_channels[:50]:
         ch_id = ch["id"]
@@ -318,7 +318,7 @@ def _fetch_slack_summary(client: WebClient, user_id: str, days: int) -> dict:
             continue
 
         msg_list = history.get("messages", [])
-        logger.info("ease-my-life: [%s] %s → %d messages", ch_type, ch_name, len(msg_list))
+        logger.debug("ease-my-life: [%s] %s → %d messages", ch_type, ch_name, len(msg_list))
 
         for msg in msg_list[:200]:
             raw_text = msg.get("text", "")
@@ -342,7 +342,7 @@ def _fetch_slack_summary(client: WebClient, user_id: str, days: int) -> dict:
             else:
                 messages.append(entry)
 
-    logger.info(
+    logger.debug(
         "ease-my-life: collected %d high-priority, %d normal messages",
         len(mentions), len(messages),
     )
@@ -360,19 +360,16 @@ def _register_handlers(app: App):
 
         if not text:
             google_ok = user_store.is_google_configured()
-            llm_ok = user_store.is_llm_configured()
             g = user_store.get_admin_google()
-            l = user_store.get_admin_llm()
 
             respond(
                 f"*OloidBot Setup*\n\n"
                 f"*1. Google OAuth:* {'`Connected` (' + g['client_id'][:20] + '...)' if google_ok else '`Not configured`'}\n"
                 f"   `/oloid-setup google <client_id> <client_secret>`\n\n"
-                f"*2. LLM Provider:* {'`' + l['provider'] + '` / `' + (l['model'] or 'default') + '`' if llm_ok else '`Not configured`'}\n"
-                f"   `/oloid-setup llm <provider> <api_key> [model]`\n\n"
-                f"*3. For each user:*\n"
-                f"   `/oloid-connect-gmail` — link Gmail account\n"
-                f"   `/oloid-set-llm <provider> <api_key> [model]` — optional personal override\n\n"
+                f"*2. Each user sets their own LLM:*\n"
+                f"   `/oloid-set-llm <provider> <api_key> [model]`\n\n"
+                f"*3. Each user connects Gmail:*\n"
+                f"   `/oloid-connect-gmail` — link Gmail account\n\n"
                 f"_After setup, users can `/oloid-summarize`, `/oloid-emails`, `/oloid-ask`, or DM the bot._"
             )
             return
@@ -390,31 +387,12 @@ def _register_handlers(app: App):
                 f"_Make sure `{settings.oauth_redirect_uri}` is added as an authorized redirect URI in Google Cloud Console._"
             )
 
-        elif subcommand == "llm" and len(parts) >= 3:
-            provider = parts[1].lower()
-            api_key = parts[2]
-            model = parts[3] if len(parts) > 3 else ""
-
-            from .llm import LLMFactory
-            available = LLMFactory.available_providers()
-            if provider not in available:
-                respond(f"Unknown provider `{provider}`. Available: {', '.join(available)}")
-                return
-
-            user_store.set_admin_llm(provider, api_key, model)
-            display_model = model or get_default_model(provider)
-            respond(
-                f"Default LLM set to `{provider}` / `{display_model}`\n"
-                f"_All users will use this unless they override with `/oloid-set-llm`._"
-            )
-
         else:
             respond(
                 "*Usage:*\n"
                 "• `/oloid-setup` — show current setup status\n"
-                "• `/oloid-setup google <client_id> <client_secret>` — configure Google OAuth\n"
-                "• `/oloid-setup llm <provider> <api_key> [model]` — configure default LLM\n\n"
-                "*Supported LLM providers:* openai, anthropic, gemini, groq, mistral, cohere, ollama"
+                "• `/oloid-setup google <client_id> <client_secret>` — configure Google OAuth\n\n"
+                "_Each user configures their own LLM with `/oloid-set-llm <provider> <api_key> [model]`_"
             )
 
     # ── /oloid-connect-gmail ──
@@ -473,25 +451,16 @@ def _register_handlers(app: App):
             from .llm import LLMFactory
             providers = ", ".join(LLMFactory.available_providers())
             respond(
-                f"*Configure your personal LLM provider:*\n\n"
+                f"*Configure your LLM provider:*\n\n"
                 f"Usage: `/oloid-set-llm <provider> <api_key> [model]`\n\n"
                 f"Providers: `{providers}`\n\n"
                 f"Examples:\n"
                 f"• `/oloid-set-llm openai sk-abc123 gpt-4o`\n"
                 f"• `/oloid-set-llm anthropic sk-ant-abc123`\n"
-                f"• `/oloid-set-llm ollama none llama3.1`\n"
-                f"• `/oloid-set-llm default` — use the admin default\n\n"
+                f"• `/oloid-set-llm gemini AIza... gemini-1.5-flash`\n"
+                f"• `/oloid-set-llm ollama none llama3.1`\n\n"
                 f"_Only you can see this message. Your API key is stored encrypted._"
             )
-            return
-
-        if text.lower() == "default":
-            user_store.set_llm_config(user_id, provider="", api_key="", model="")
-            admin_llm = user_store.get_admin_llm()
-            if admin_llm["provider"]:
-                respond(f"Reset to admin default: `{admin_llm['provider']}`")
-            else:
-                respond("Reset. Note: no admin LLM is configured yet — ask an admin to run `/oloid-setup llm ...`")
             return
 
         parts = text.split()
@@ -618,14 +587,11 @@ def _register_handlers(app: App):
         gmail_status = "Connected" if user_store.is_gmail_connected(user_id) else "Not connected"
         notif_status = "ON" if user_store.get_notifications(user_id) else "OFF"
         user_llm = user_store.get_llm_config(user_id)
-        admin_llm = user_store.get_admin_llm()
 
         if user_llm["provider"]:
-            llm_display = f"`{user_llm['provider']}` / `{user_llm['model'] or 'default'}` (personal)"
-        elif admin_llm["provider"]:
-            llm_display = f"`{admin_llm['provider']}` / `{admin_llm['model'] or 'default'}` (admin default)"
+            llm_display = f"`{user_llm['provider']}` / `{user_llm['model'] or 'default'}`"
         else:
-            llm_display = "`Not configured`"
+            llm_display = "`Not configured` — run `/oloid-set-llm <provider> <api_key>`"
 
         respond(
             f"*Your Settings*\n\n"
@@ -840,7 +806,7 @@ def _register_handlers(app: App):
                 except Exception as e:
                     logger.debug("format-this: conversations_info failed with %s: %s", label, e)
 
-            logger.info("format-this: channel=%s (%s), oldest=%s, time=%s", ch_name, channel_id, oldest_ts, time_label)
+            logger.debug("format-this: channel=%s (%s), oldest=%s, time=%s", ch_name, channel_id, oldest_ts, time_label)
 
             # Fetch messages — try each client until one works
             all_messages = []
@@ -859,7 +825,7 @@ def _register_handlers(app: App):
                     )
                     batch = raw_data.get("messages", [])
                     if batch:
-                        logger.info("format-this: first msg preview: %s", str(batch[0])[:200])
+                        logger.debug("format-this: first msg preview: %s", str(batch[0])[:200])
                     all_messages.extend(batch)
 
                     # Paginate if needed
@@ -874,10 +840,10 @@ def _register_handlers(app: App):
                         all_messages.extend(raw_data.get("messages", []))
 
                     if all_messages:
-                        logger.info("format-this: fetched %d total messages via %s", len(all_messages), label)
+                        logger.debug("format-this: fetched %d total messages via %s", len(all_messages), label)
                         break
                     else:
-                        logger.info("format-this: 0 messages via %s, trying next token", label)
+                        logger.debug("format-this: 0 messages via %s, trying next token", label)
                 except Exception as e:
                     logger.warning("format-this: history failed with %s for %s: %s", label, channel_id, e)
                     all_messages = []
@@ -965,14 +931,12 @@ def _register_handlers(app: App):
 
             "*Admin Setup*\n"
             "• `/oloid-setup` — View setup status\n"
-            "• `/oloid-setup google <client_id> <client_secret>` — Configure Google OAuth\n"
-            "• `/oloid-setup llm <provider> <api_key> [model]` — Configure default LLM\n\n"
+            "• `/oloid-setup google <client_id> <client_secret>` — Configure Google OAuth\n\n"
 
             "*User Setup*\n"
+            "• `/oloid-set-llm <provider> <api_key> [model]` — Set your LLM (required)\n"
             "• `/oloid-connect-gmail` — Connect your Gmail account\n"
-            "• `/oloid-disconnect-gmail` — Disconnect Gmail\n"
-            "• `/oloid-set-llm <provider> <api_key> [model]` — Set personal LLM\n"
-            "• `/oloid-set-llm default` — Use admin default LLM\n\n"
+            "• `/oloid-disconnect-gmail` — Disconnect Gmail\n\n"
 
             "*Email Features*\n"
             "• `/oloid-summarize [n]` — Summarize last n emails (default 10)\n"
@@ -1035,9 +999,9 @@ def _register_handlers(app: App):
             say(
                 "Hi! I'm *Oloid*, your AI assistant.\n\n"
                 "*Get started:*\n"
-                "1. `/oloid-setup` — configure Google & LLM (admin)\n"
+                "1. `/oloid-set-llm <provider> <api_key>` — set your LLM (required)\n"
                 "2. `/oloid-connect-gmail` — link your Gmail\n"
-                "3. `/oloid-ask` — ask me anything (no Gmail needed)\n\n"
+                "3. `/oloid-ask` — ask me anything\n\n"
                 "_DM me or use slash commands anytime!_"
             )
         except Exception as e:

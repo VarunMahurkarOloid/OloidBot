@@ -9,3 +9,4 @@ build/
 .venv/
 venv/
 tokens/
+SETUP.md

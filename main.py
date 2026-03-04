@@ -1,12 +1,24 @@
 import logging
+import os
 import signal
 import sys
 
+# Production: WARNING only; Dev: INFO
+_log_level = logging.WARNING if os.environ.get("RENDER") else logging.INFO
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=_log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+
+# Quiet noisy third-party loggers even in dev
+for _noisy in ("urllib3", "google", "googleapiclient", "oauth2client",
+               "apscheduler", "slack_sdk", "slack_bolt", "httpx"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
+# Always show our startup messages
+logger.setLevel(logging.INFO)
 
 
 def main():

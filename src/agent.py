@@ -35,25 +35,24 @@ def _format_email_list(emails: list[Email]) -> str:
 
 def _get_llm_for_user(slack_user_id: str):
     user_cfg = user_store.get_llm_config(slack_user_id)
-    admin_cfg = user_store.get_admin_llm()
 
-    provider = user_cfg["provider"] or admin_cfg["provider"]
-    api_key = user_cfg["api_key"] or admin_cfg["api_key"]
+    provider = user_cfg["provider"]
+    api_key = user_cfg["api_key"]
 
-    if not provider:
+    if not provider or not api_key:
         raise RuntimeError(
-            "No LLM configured. Ask an admin to run `/oloid-setup llm <provider> <api_key>` "
-            "or set your own with `/oloid-set-llm <provider> <api_key>`."
+            "You haven't set up your LLM yet.\n"
+            "Run `/oloid-set-llm <provider> <api_key> [model]` to get started.\n\n"
+            "Examples:\n"
+            "• `/oloid-set-llm openai sk-... gpt-4o`\n"
+            "• `/oloid-set-llm anthropic sk-ant-... claude-3-haiku-20240307`\n"
+            "• `/oloid-set-llm gemini AIza...`"
         )
 
-    model = (
-        user_cfg["model"]
-        or admin_cfg["model"]
-        or get_default_model(provider)
-    )
+    model = user_cfg["model"] or get_default_model(provider)
 
     if not model:
-        raise RuntimeError(f"No default model configured for provider '{provider}'.")
+        raise RuntimeError(f"No default model for provider '{provider}'. Set one with `/oloid-set-llm {provider} <key> <model>`.")
 
     return LLMFactory.create(
         provider=provider,

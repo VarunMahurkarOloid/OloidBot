@@ -17,10 +17,62 @@ from .user_store import user_store
 logger = logging.getLogger(__name__)
 
 
-def _poll_new_emails():
-    """Check all connected users for new emails and DM summaries."""
+def _poll_single_user(user_id: str, client: WebClient, now: float):
+    """Poll a single user's Gmail. Called from thread pool."""
     from .agent import _format_email_for_llm, _get_llm_for_user
     from .gmail_client import GmailClient
+
+    # Skip users who disabled notifications
+    if not user_store.get_notifications(user_id):
+        return
+
+    last_poll = user_store.get_last_poll_ts(user_id)
+    if last_poll == 0:
+        user_store.set_last_poll_ts(user_id, now)
+        return
+
+    try:
+        gmail = GmailClient(user_id)
+        new_emails = gmail.fetch_new_since(last_poll, max_results=20)
+
+        user_store.set_last_poll_ts(user_id, now)
+
+        if not new_emails:
+            return
+
+        logger.info("Found %d new emails for user %s", len(new_emails), user_id)
+
+        try:
+            llm = _get_llm_for_user(user_id)
+            emails_text = "\n---\n".join(_format_email_for_llm(e) for e in new_emails)
+            loop = asyncio.new_event_loop()
+            summary = loop.run_until_complete(llm.summarize(emails_text))
+            loop.close()
+
+            links = "\n".join(
+                f"• <{e.gmail_url}|{e.subject}>" for e in new_emails[:5]
+            )
+            message = (
+                f"*New emails ({len(new_emails)}):*\n\n"
+                f"{summary}\n\n"
+                f"*Quick links:*\n{links}"
+            )
+        except Exception:
+            logger.debug("LLM not available for user %s, sending plain list", user_id)
+            lines = []
+            for e in new_emails:
+                lines.append(f"• *{e.subject}* — {e.sender}\n  <{e.gmail_url}|Open in Gmail>")
+            message = f"*New emails ({len(new_emails)}):*\n\n" + "\n".join(lines)
+
+        client.chat_postMessage(channel=user_id, text=message)
+
+    except Exception:
+        logger.exception("Poll failed for user %s", user_id)
+
+
+def _poll_new_emails():
+    """Check all connected users for new emails and DM summaries."""
+    from concurrent.futures import ThreadPoolExecutor
 
     connected_users = user_store.all_connected_users()
     if not connected_users:
@@ -29,57 +81,10 @@ def _poll_new_emails():
     client = WebClient(token=settings.slack_bot_token)
     now = time.time()
 
-    for user_id in connected_users:
-        # Skip users who disabled notifications
-        if not user_store.get_notifications(user_id):
-            continue
-
-        last_poll = user_store.get_last_poll_ts(user_id)
-        if last_poll == 0:
-            # First poll — set to now, don't flood
-            user_store.set_last_poll_ts(user_id, now)
-            continue
-
-        try:
-            gmail = GmailClient(user_id)
-            new_emails = gmail.fetch_new_since(last_poll, max_results=20)
-
-            user_store.set_last_poll_ts(user_id, now)
-
-            if not new_emails:
-                continue
-
-            logger.info("Found %d new emails for user %s", len(new_emails), user_id)
-
-            # Summarize with LLM
-            try:
-                llm = _get_llm_for_user(user_id)
-                emails_text = "\n---\n".join(_format_email_for_llm(e) for e in new_emails)
-                loop = asyncio.new_event_loop()
-                summary = loop.run_until_complete(llm.summarize(emails_text))
-                loop.close()
-
-                # Build quick links
-                links = "\n".join(
-                    f"• <{e.gmail_url}|{e.subject}>" for e in new_emails[:5]
-                )
-                message = (
-                    f"*New emails ({len(new_emails)}):*\n\n"
-                    f"{summary}\n\n"
-                    f"*Quick links:*\n{links}"
-                )
-            except Exception:
-                # LLM not configured — send plain list
-                logger.debug("LLM not available for user %s, sending plain list", user_id)
-                lines = []
-                for e in new_emails:
-                    lines.append(f"• *{e.subject}* — {e.sender}\n  <{e.gmail_url}|Open in Gmail>")
-                message = f"*New emails ({len(new_emails)}):*\n\n" + "\n".join(lines)
-
-            client.chat_postMessage(channel=user_id, text=message)
-
-        except Exception:
-            logger.exception("Poll failed for user %s", user_id)
+    # Process users in parallel (max 10 threads to avoid overload)
+    with ThreadPoolExecutor(max_workers=min(10, len(connected_users))) as pool:
+        for user_id in connected_users:
+            pool.submit(_poll_single_user, user_id, client, now)
 
 
 _scheduler: BackgroundScheduler = None
