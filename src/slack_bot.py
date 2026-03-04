@@ -2,7 +2,8 @@ import asyncio
 import logging
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -15,6 +16,36 @@ logger = logging.getLogger(__name__)
 
 app: App = None
 agent = None
+
+# Cache: slack_user_id → ZoneInfo
+_tz_cache: dict[str, ZoneInfo] = {}
+
+
+def _get_user_tz(user_id: str) -> ZoneInfo:
+    """Get a user's timezone from Slack profile. Cached per session."""
+    if user_id in _tz_cache:
+        return _tz_cache[user_id]
+    try:
+        bot = _get_bot_client()
+        resp = bot.users_info(user=user_id)
+        tz_str = resp.data.get("user", {}).get("tz", "UTC")
+        tz = ZoneInfo(tz_str)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    _tz_cache[user_id] = tz
+    return tz
+
+
+def _user_now(user_id: str) -> datetime:
+    """Get current time in the user's timezone."""
+    tz = _get_user_tz(user_id)
+    return datetime.now(tz)
+
+
+def _to_user_time(user_id: str, ts: float) -> datetime:
+    """Convert a Unix timestamp to a datetime in the user's timezone."""
+    tz = _get_user_tz(user_id)
+    return datetime.fromtimestamp(ts, tz=tz)
 
 
 def _get_app() -> App:
@@ -635,7 +666,7 @@ def _register_handlers(app: App):
 
         message, delta = parsed
         fire_at = time.time() + delta.total_seconds()
-        fire_dt = datetime.fromtimestamp(fire_at)
+        fire_dt = _to_user_time(user_id, fire_at)
 
         from .scheduler import schedule_reminder
         schedule_reminder(user_id, message, fire_at)
@@ -666,7 +697,7 @@ def _register_handlers(app: App):
 
         lines = ["*Your pending reminders:*\n"]
         for r in sorted(reminders, key=lambda x: x["fire_at"]):
-            fire_dt = datetime.fromtimestamp(r["fire_at"])
+            fire_dt = _to_user_time(user_id, r["fire_at"])
             time_str = fire_dt.strftime("%b %d, %I:%M %p").replace(" 0", " ")
             lines.append(f"• *{r['text']}* — {time_str}  (`{r['id']}`)")
 
@@ -718,8 +749,8 @@ def _register_handlers(app: App):
             port = settings.effective_port
             timer_url = f"http://localhost:{port}/focus?m={minutes}&autostart=1"
 
-        # Calculate break reminder time display
-        break_dt = datetime.fromtimestamp(break_at)
+        # Calculate break reminder time display in user's timezone
+        break_dt = _to_user_time(user_id, break_at)
         break_time = break_dt.strftime("%I:%M %p").lstrip("0")
 
         # On Render, just send the URL; locally, also open a browser window
@@ -867,7 +898,7 @@ def _register_handlers(app: App):
                 resolved_text = _resolve_mentions_in_text(raw_text, name_cache)
                 ts = msg.get("ts", "")
                 try:
-                    dt_str = datetime.fromtimestamp(float(ts)).strftime("%b %d, %I:%M %p")
+                    dt_str = _to_user_time(user_id, float(ts)).strftime("%b %d, %I:%M %p")
                 except (ValueError, OSError):
                     dt_str = ""
                 lines.append(f"[{dt_str}] {sender}: {resolved_text[:300]}")

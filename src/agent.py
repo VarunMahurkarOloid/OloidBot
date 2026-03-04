@@ -214,10 +214,20 @@ class EmailAgent:
         # ── Reminders ──
         reminders = user_store.get_user_reminders(user_id)
         if reminders:
-            from datetime import datetime as dt
+            from datetime import datetime as dt, timezone as _tz
+            from zoneinfo import ZoneInfo
+            # Get user timezone from Slack
+            try:
+                from slack_sdk import WebClient
+                _bot = WebClient(token=settings.slack_bot_token)
+                _resp = _bot.users_info(user=user_id)
+                _tz_str = _resp.data.get("user", {}).get("tz", "UTC")
+                _user_tz = ZoneInfo(_tz_str)
+            except Exception:
+                _user_tz = ZoneInfo("UTC")
             lines = []
             for r in reminders:
-                fire_str = dt.fromtimestamp(r["fire_at"]).strftime("%b %d, %I:%M %p")
+                fire_str = dt.fromtimestamp(r["fire_at"], tz=_user_tz).strftime("%b %d, %I:%M %p")
                 lines.append(f"- [Reminder] {r['text']} — due {fire_str}")
             sections.append("PENDING REMINDERS:\n" + "\n".join(lines))
 
