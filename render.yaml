@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: oloidbot
+    runtime: docker
+    plan: free
+    envVars:
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_APP_TOKEN
+        sync: false
+      - key: SLACK_USER_TOKEN
+        sync: false
+      - key: OAUTH_REDIRECT_URI
+        sync: false
+      - key: FERNET_KEY
+        sync: false
+      - key: DATA_DIR
+        value: /opt/render/data
+      - key: POLL_INTERVAL_MINUTES
+        value: "5"
+    disk:
+      name: oloid-data
+      mountPath: /opt/render/data
+      sizeGB: 1

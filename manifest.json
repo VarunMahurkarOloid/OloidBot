@@ -1,0 +1,151 @@
+{
+  "display_information": {
+    "name": "OloidBot",
+    "description": "OloidBot by Varun Mahurkar an LLM-powered helper, try /oloid-commands for overview of all commands more feature and automation coming soon.",
+    "background_color": "#1a1a2e"
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "OloidBot",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/oloid-setup",
+        "description": "Configure Google OAuth and LLM (admin)",
+        "usage_hint": "google [client_id] [client_secret] OR llm [provider] [api_key] [model]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-connect-gmail",
+        "description": "Connect your Gmail account to get email summaries",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-disconnect-gmail",
+        "description": "Disconnect your Gmail account from Oloid",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-summarize",
+        "description": "Summarize your recent emails",
+        "usage_hint": "[number of emails, default 10]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-emails",
+        "description": "List recent emails with Gmail links",
+        "usage_hint": "[number of emails, default 10]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-set-llm",
+        "description": "Set your personal AI provider",
+        "usage_hint": "[provider] [api_key] [model]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-notifications",
+        "description": "Toggle real-time email notifications",
+        "usage_hint": "on | off",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-ask",
+        "description": "Ask Oloid anything (general AI assistant)",
+        "usage_hint": "[ask_your_question_here]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-mysettings",
+        "description": "View your current Oloid settings",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-remind",
+        "description": "Set a reminder (DM at specified time)",
+        "usage_hint": "[message] in [time, e.g. 30m, 2h, 1d]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-reminders",
+        "description": "View or cancel your pending reminders",
+        "usage_hint": "[cancel <reminder_id>]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-ease-my-life",
+        "description": "Get a priority-ranked briefing of your Slack, emails & reminders",
+        "usage_hint": "[days, default 7]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-format-this",
+        "description": "Summarize the current channel or DM conversation",
+        "usage_hint": "[time, e.g. 7d, 24h, default 7d]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-focus",
+        "description": "It is a focus timer for users who gets easily distracted from the work.",
+        "usage_hint": "[time, e.g. 25m, 90m]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-commands",
+        "description": "View all the current Oloid available commands",
+        "should_escape": false
+      }
+    ],
+    "assistant_view": {
+      "assistant_description": "OloidBot by Varun Mahurkar an LLM-powered helper, try /oloid-commands for overview of all commands more feature and automation coming soon on slack so that everybody can use it and save there time and become more productive.",
+      "suggested_prompts": []
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "user": [
+        "users:read",
+        "channels:history",
+        "channels:read",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "mpim:history",
+        "mpim:read"
+      ],
+      "bot": [
+        "users:read",
+        "app_mentions:read",
+        "assistant:write",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "commands",
+        "groups:history",
+        "groups:read",
+        "groups:write",
+        "im:history",
+        "im:read",
+        "im:write"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": ["app_mention", "assistant_thread_started", "message.im"]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
