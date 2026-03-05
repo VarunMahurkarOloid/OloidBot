@@ -3,22 +3,21 @@ import os
 import signal
 import sys
 
-# Production: WARNING only; Dev: INFO
-_log_level = logging.WARNING if os.environ.get("RENDER") else logging.INFO
-
+# Always use INFO for our code so we see errors and startup info.
+# Only quiet noisy third-party loggers.
 logging.basicConfig(
-    level=_log_level,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-# Quiet noisy third-party loggers even in dev
+# Quiet noisy third-party loggers
 for _noisy in ("urllib3", "google", "googleapiclient", "oauth2client",
-               "apscheduler", "slack_sdk", "slack_bolt", "httpx"):
+               "apscheduler.scheduler", "apscheduler.executors",
+               "slack_sdk.web.slack_response", "slack_bolt",
+               "httpx", "httpcore"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-# Always show our startup messages
-logger.setLevel(logging.INFO)
 
 
 def _start_keep_alive():

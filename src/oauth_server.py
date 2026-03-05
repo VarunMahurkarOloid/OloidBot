@@ -236,6 +236,33 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(b'{"status":"ok","service":"oloidbot"}')
             return
 
+        # ── Diagnostic status (shows config without secrets) ──
+        if parsed.path == "/status":
+            import json as _json
+            import os as _os
+            status = {
+                "service": "oloidbot",
+                "env": {
+                    "SLACK_BOT_TOKEN": "set" if settings.slack_bot_token else "MISSING",
+                    "SLACK_APP_TOKEN": "set" if settings.slack_app_token else "MISSING",
+                    "SLACK_USER_TOKEN": "set" if settings.slack_user_token else "not set",
+                    "BASE_URL": settings.effective_base_url,
+                    "OAUTH_REDIRECT_URI": settings.effective_oauth_redirect_uri,
+                    "DATA_DIR": settings.effective_data_dir,
+                    "FERNET_KEY": "set" if settings.fernet_key else "auto-generated",
+                    "PORT": str(settings.effective_port),
+                    "RENDER": _os.environ.get("RENDER", "not set"),
+                },
+                "data_dir_exists": _os.path.exists(settings.effective_data_dir),
+                "store_exists": _os.path.exists(_os.path.join(settings.effective_data_dir, "store.json")),
+                "encryption_key_exists": _os.path.exists(_os.path.join(settings.effective_data_dir, "encryption.key")),
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(_json.dumps(status, indent=2).encode())
+            return
+
         # ── Focus timer page ──
         if parsed.path == "/focus":
             params = urllib.parse.parse_qs(parsed.query)
