@@ -12,15 +12,27 @@ from cryptography.fernet import Fernet
 def _load_or_create_key() -> bytes:
     from .config import settings
 
-    # Production: use env var
-    if settings.fernet_key:
-        return settings.fernet_key.encode()
-
-    # Dev: auto-generate and store locally
     key_path = os.path.join(settings.effective_data_dir, "encryption.key")
+
+    # Priority 1: FERNET_KEY env var (recommended for production)
+    if settings.fernet_key:
+        key = settings.fernet_key.encode()
+        # Also save to disk as backup so data survives if env var is ever lost
+        try:
+            os.makedirs(os.path.dirname(key_path), exist_ok=True)
+            if not os.path.exists(key_path):
+                with open(key_path, "wb") as f:
+                    f.write(key)
+        except Exception:
+            pass
+        return key
+
+    # Priority 2: existing key file on persistent disk
     if os.path.exists(key_path):
         with open(key_path, "rb") as f:
             return f.read()
+
+    # Priority 3: auto-generate new key (first run)
     key = Fernet.generate_key()
     os.makedirs(os.path.dirname(key_path), exist_ok=True)
     with open(key_path, "wb") as f:

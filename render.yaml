@@ -3,6 +3,7 @@ services:
     name: oloidbot
     runtime: docker
     plan: free
+    healthCheckPath: /health
     envVars:
       - key: SLACK_BOT_TOKEN
         sync: false
@@ -10,7 +11,7 @@ services:
         sync: false
       - key: SLACK_USER_TOKEN
         sync: false
-      - key: OAUTH_REDIRECT_URI
+      - key: BASE_URL
         sync: false
       - key: FERNET_KEY
         sync: false

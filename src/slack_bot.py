@@ -415,7 +415,7 @@ def _register_handlers(app: App):
             respond(
                 f"Google OAuth configured! (Client ID: `{client_id[:20]}...`)\n"
                 f"Team members can now use `/oloid-connect-gmail` to link their Gmail.\n\n"
-                f"_Make sure `{settings.oauth_redirect_uri}` is added as an authorized redirect URI in Google Cloud Console._"
+                f"_Make sure `{settings.effective_oauth_redirect_uri}` is added as an authorized redirect URI in Google Cloud Console._"
             )
 
         else:
@@ -738,22 +738,15 @@ def _register_handlers(app: App):
             break_at,
         )
 
-        # Build the timer URL (autostart=1 starts the timer immediately)
-        import os as _os
-        if _os.environ.get("RENDER"):
-            # Production: use the public Render URL
-            base_url = settings.oauth_redirect_uri.rsplit("/", 2)[0]
-            timer_url = f"{base_url}/focus?m={minutes}&autostart=1"
-        else:
-            # Local dev: use localhost
-            port = settings.effective_port
-            timer_url = f"http://localhost:{port}/focus?m={minutes}&autostart=1"
+        # Build the timer URL using the configured base URL
+        timer_url = f"{settings.effective_base_url}/focus?m={minutes}&autostart=1"
 
         # Calculate break reminder time display in user's timezone
         break_dt = _to_user_time(user_id, break_at)
         break_time = break_dt.strftime("%I:%M %p").lstrip("0")
 
-        # On Render, just send the URL; locally, also open a browser window
+        # On production, just send the URL; locally, also open a browser window
+        import os as _os
         if _os.environ.get("RENDER"):
             respond(
                 f"*Oloid Focus — {minutes} min deep work session*\n\n"

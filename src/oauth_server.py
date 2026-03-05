@@ -52,13 +52,13 @@ def _create_flow() -> Flow:
             "client_secret": google["client_secret"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [settings.oauth_redirect_uri],
+            "redirect_uris": [settings.effective_oauth_redirect_uri],
         }
     }
     return Flow.from_client_config(
         client_config,
         scopes=SCOPES,
-        redirect_uri=settings.oauth_redirect_uri,
+        redirect_uri=settings.effective_oauth_redirect_uri,
     )
 
 
@@ -227,6 +227,14 @@ if (AUTOSTART) { setTimeout(start, 500); }
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+
+        # ── Health check (Render uses this to verify service is alive) ──
+        if parsed.path in ("/", "/health"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok","service":"oloidbot"}')
+            return
 
         # ── Focus timer page ──
         if parsed.path == "/focus":
