@@ -201,18 +201,22 @@ class UserStore:
 
     # ── OAuth state management ──
 
-    def save_oauth_state(self, state: str, slack_user_id: str):
+    def save_oauth_state(self, state: str, slack_user_id: str, code_verifier: str = None):
         with self._lock:
             pending = self._data.setdefault("__oauth_pending__", {})
-            pending[state] = slack_user_id
+            pending[state] = {"user_id": slack_user_id, "code_verifier": code_verifier}
             self._save()
 
-    def pop_oauth_state(self, state: str) -> Optional[str]:
+    def pop_oauth_state(self, state: str) -> Optional[dict]:
+        """Returns {"user_id": ..., "code_verifier": ...} or None."""
         with self._lock:
             pending = self._data.get("__oauth_pending__", {})
-            user_id = pending.pop(state, None)
+            data = pending.pop(state, None)
             self._save()
-            return user_id
+            # Backwards compat: old format stored just the user_id string
+            if isinstance(data, str):
+                return {"user_id": data, "code_verifier": None}
+            return data
 
     # ── persistence ──
 

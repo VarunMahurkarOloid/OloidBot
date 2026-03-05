@@ -30,7 +30,6 @@ def set_slack_client(client):
 def build_oauth_url(slack_user_id: str) -> str:
     """Generate a Google OAuth URL for a Slack user."""
     state = secrets.token_urlsafe(32)
-    user_store.save_oauth_state(state, slack_user_id)
 
     flow = _create_flow()
     auth_url, _ = flow.authorization_url(
@@ -38,6 +37,9 @@ def build_oauth_url(slack_user_id: str) -> str:
         prompt="consent",
         state=state,
     )
+    # Save the state to verify during callback
+    user_store.save_oauth_state(state, slack_user_id)
+
     return auth_url
 
 
@@ -55,11 +57,12 @@ def _create_flow() -> Flow:
             "redirect_uris": [settings.effective_oauth_redirect_uri],
         }
     }
-    return Flow.from_client_config(
+    flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
         redirect_uri=settings.effective_oauth_redirect_uri,
     )
+    return flow
 
 
 FOCUS_TIMER_HTML = """<!DOCTYPE html>
@@ -304,10 +307,12 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             self._respond(400, "Missing code or state parameter.")
             return
 
-        slack_user_id = user_store.pop_oauth_state(state)
-        if not slack_user_id:
+        oauth_data = user_store.pop_oauth_state(state)
+        if not oauth_data:
             self._respond(400, "Invalid or expired state. Please try /oloid-connect-gmail again.")
             return
+
+        slack_user_id = oauth_data["user_id"]
 
         try:
             flow = _create_flow()
