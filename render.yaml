@@ -15,11 +15,10 @@ services:
         sync: false
       - key: FERNET_KEY
         sync: false
-      - key: DATA_DIR
-        value: /opt/render/data
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
       - key: POLL_INTERVAL_MINUTES
         value: "5"
-    disk:
-      name: oloid-data
-      mountPath: /opt/render/data
-      sizeGB: 1
+    # No disk needed — data lives in Supabase

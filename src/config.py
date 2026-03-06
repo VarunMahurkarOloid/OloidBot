@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     poll_interval_minutes: int = Field(5)
     data_dir: str = Field("", description="Override data directory path")
     fernet_key: str = Field("", description="Fernet encryption key (set in production)")
+    supabase_url: str = Field("", description="Supabase project URL")
+    supabase_key: str = Field("", description="Supabase anon/service key")
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
