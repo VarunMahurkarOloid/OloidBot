@@ -37,8 +37,8 @@ def build_oauth_url(slack_user_id: str) -> str:
         prompt="consent",
         state=state,
     )
-    # Save the state to verify during callback
-    user_store.save_oauth_state(state, slack_user_id)
+    # Save state + code_verifier (needed for PKCE token exchange)
+    user_store.save_oauth_state(state, slack_user_id, code_verifier=flow.code_verifier)
 
     return auth_url
 
@@ -313,9 +313,11 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             return
 
         slack_user_id = oauth_data["user_id"]
+        code_verifier = oauth_data.get("code_verifier")
 
         try:
             flow = _create_flow()
+            flow.code_verifier = code_verifier
             flow.fetch_token(code=code)
             creds = flow.credentials
             token_data = json.loads(creds.to_json())
