@@ -1072,12 +1072,20 @@ def _register_handlers(app: App):
             query_text = user_match.group(2).strip()
             name_cache: dict = {}
             target_name = _resolve_user_name(target_uid, name_cache)
-            scope = f"in:<@{target_uid}>"
+            # Open/find the DM channel with this user to get the real channel ID
+            try:
+                dm_resp = client.conversations_open(users=[target_uid])
+                dm_channel_id = dm_resp.data["channel"]["id"]
+                scope = f"in:{dm_channel_id}"
+            except Exception as e:
+                logger.warning("Could not open DM with %s: %s", target_uid, e)
+                scope = f"from:{target_name}"
             scope_label = f"DMs with {target_name}"
         elif channel_match:
+            channel_id_match = channel_match.group(1)
             channel_name = channel_match.group(2)
             query_text = channel_match.group(3).strip()
-            scope = f"in:{channel_name}"
+            scope = f"in:{channel_id_match}"
             scope_label = f"#{channel_name}"
         elif text.lower().startswith("all "):
             query_text = text[4:].strip()
