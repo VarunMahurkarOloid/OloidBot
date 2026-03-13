@@ -99,7 +99,7 @@
       {
         "command": "/oloid-find",
         "description": "Search Slack messages and files with natural language",
-        "usage_hint": "[your search query, e.g. pdf from @rahul last week]",
+        "usage_hint": "[@user / #channel / all] [query]",
         "should_escape": false
       },
       {

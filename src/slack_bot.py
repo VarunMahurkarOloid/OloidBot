@@ -1046,21 +1046,61 @@ def _register_handlers(app: App):
         if not text:
             respond(
                 "*Search Slack with natural language:*\n\n"
-                "Usage: `/oloid-find <query>`\n\n"
-                "Examples:\n"
-                "• `/oloid-find kafka memory leak`\n"
-                "• `/oloid-find pdf shared by @rahul last week`\n"
-                "• `/oloid-find image from @alex 4 months ago`\n"
-                "• `/oloid-find dashboard api design in #engineering`\n\n"
-                "_Powered by your LLM — understands dates, file types, senders, and channels._"
+                "Usage: `/oloid-find <scope> <query>`\n\n"
+                "*Scopes:*\n"
+                "• `@username` — search in your DMs with that person\n"
+                "• `#channel` — search in a specific channel/group\n"
+                "• `all` — search across all of Slack\n\n"
+                "*Examples:*\n"
+                "• `/oloid-find @anshul pg admin server credentials`\n"
+                "• `/oloid-find #engineering kafka memory leak`\n"
+                "• `/oloid-find all pdf shared last week`\n"
             )
             return
 
-        respond(":mag: Searching...")
+        # ── Parse scope: @user, #channel, or all ──
+        scope = ""
+        scope_label = "everywhere"
+        query_text = text
+
+        # Slack encodes @user as <@U12345> and #channel as <#C12345|name>
+        user_match = re.match(r"<@([A-Z0-9]+)(?:\|[^>]*)?>\s*(.*)", text)
+        channel_match = re.match(r"<#([A-Z0-9]+)\|([^>]*)>\s*(.*)", text)
+
+        if user_match:
+            target_uid = user_match.group(1)
+            query_text = user_match.group(2).strip()
+            name_cache: dict = {}
+            target_name = _resolve_user_name(target_uid, name_cache)
+            scope = f"in:<@{target_uid}>"
+            scope_label = f"DMs with {target_name}"
+        elif channel_match:
+            channel_name = channel_match.group(2)
+            query_text = channel_match.group(3).strip()
+            scope = f"in:{channel_name}"
+            scope_label = f"#{channel_name}"
+        elif text.lower().startswith("all "):
+            query_text = text[4:].strip()
+
+        if not query_text:
+            respond("Please provide a search query after the scope.\nExample: `/oloid-find @anshul server credentials`")
+            return
+
+        respond(f":mag: Searching {scope_label}...")
 
         try:
-            filters = _run_async(_get_agent().parse_search_query(user_id, text))
+            filters = _run_async(_get_agent().parse_search_query(user_id, query_text))
+
+            # Scope already handles user/channel filtering, clear LLM duplicates
+            if user_match:
+                filters["sender"] = ""
+                filters["channel"] = ""
+            elif channel_match:
+                filters["channel"] = ""
+
             query_string = _build_slack_search_query(filters)
+            if scope:
+                query_string = f"{scope} {query_string}".strip() if query_string else scope
 
             if not query_string:
                 respond("Couldn't build a search query from your input. Try rephrasing.")
@@ -1072,8 +1112,7 @@ def _register_handlers(app: App):
             messages, files = _execute_slack_search(query_string, filters, client)
             result = _format_search_results(messages, files, user_id)
 
-            # Show what was searched
-            header = f"_Searched {search_type} for:_ `{query_string}`\n\n"
+            header = f"_Searched {search_type} in {scope_label}:_ `{query_string}`\n\n"
             respond(header + result)
 
         except RuntimeError as e:
@@ -1107,7 +1146,7 @@ def _register_handlers(app: App):
 
             "*AI Chat*\n"
             "• `/oloid-ask <question>` — Ask anything (no Gmail needed)\n"
-            "• `/oloid-find <query>` — Search Slack with natural language\n"
+            "• `/oloid-find <@user/#channel/all> <query>` — Search Slack with natural language\n"
             "• DM the bot — Chat directly\n"
             "• @Mention the bot — Ask in a channel\n\n"
 
