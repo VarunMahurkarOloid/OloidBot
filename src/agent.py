@@ -1,5 +1,8 @@
+import json
+import logging
 import re
 from collections import defaultdict
+from datetime import date
 
 from .config import get_default_model, settings
 from .gmail_client import Email, GmailClient
@@ -7,8 +10,11 @@ from .llm import LLMFactory
 from .llm.prompts import (
     build_chat_prompt_with_memory,
     build_email_prompt_with_memory,
+    build_search_query_parse_prompt,
 )
 from .user_store import user_store
+
+logger = logging.getLogger(__name__)
 
 
 def _format_email_for_llm(email: Email) -> str:
@@ -277,6 +283,24 @@ class EmailAgent:
             system=system_prompt,
         )
         return reply
+
+    async def parse_search_query(self, user_id: str, raw_query: str) -> dict:
+        """Use the LLM to parse a natural-language Slack search query into
+        structured filters (keywords, sender, file_type, dates, channel)."""
+        today = date.today().isoformat()
+        system = build_search_query_parse_prompt(today)
+
+        llm = _get_llm_for_user(user_id)
+        response = await llm.chat(
+            [{"role": "user", "content": raw_query}],
+            system=system,
+        )
+
+        try:
+            return json.loads(response)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Failed to parse LLM search response: %s", response)
+            return {"keywords": raw_query}
 
     def _extract_number(self, text: str, default: int = 10) -> int:
         match = re.search(r"\b(\d+)\b", text)

@@ -68,6 +68,40 @@ MEMORY_ANALYSIS_PROMPT = (
 )
 
 
+def build_search_query_parse_prompt(today: str) -> str:
+    """Build the prompt that instructs the LLM to parse a natural-language
+    Slack search query into structured JSON filters.
+
+    ``today`` should be an ISO date string like ``2026-03-13``.
+    """
+    return (
+        "You are a search-query parser. The user will give you a natural language "
+        "request to find Slack messages or files. Extract structured filters and "
+        "return ONLY valid JSON — no markdown fences, no extra text.\n\n"
+        f"Today's date is {today}. Use it to resolve relative dates like "
+        "\"last week\", \"4-5 months ago\", \"yesterday\", etc.\n\n"
+        "Return a JSON object with exactly these keys:\n"
+        "  keywords  – search terms (string)\n"
+        "  sender    – person's name WITHOUT the @ prefix (string)\n"
+        "  file_type – one of: image, pdf, document, spreadsheet, or empty string\n"
+        "  date_from – YYYY-MM-DD or empty string\n"
+        "  date_to   – YYYY-MM-DD or empty string\n"
+        "  channel   – channel name WITHOUT # prefix, or empty string\n\n"
+        "File type mapping:\n"
+        "  image/photo/picture/screenshot → image\n"
+        "  pdf → pdf\n"
+        "  doc/document/word → document\n"
+        "  spreadsheet/excel/sheet/csv → spreadsheet\n\n"
+        "Rules:\n"
+        "- Strip @ from sender names.\n"
+        "- Strip # from channel names.\n"
+        "- Leave fields as empty string \"\" when not mentioned.\n"
+        "- For vague date ranges like \"4-5 months ago\", set date_from to the "
+        "earlier boundary and date_to to the later boundary.\n"
+        "- Return ONLY the JSON object, nothing else."
+    )
+
+
 def build_chat_prompt_with_memory(memories: list[str]) -> str:
     """Build a personalized system prompt by injecting user memories."""
     if not memories:

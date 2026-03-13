@@ -380,6 +380,97 @@ def _fetch_slack_summary(client: WebClient, user_id: str, days: int) -> dict:
     return {"mentions": mentions, "messages": messages}
 
 
+def _build_slack_search_query(filters: dict) -> str:
+    """Turn parsed LLM filters into a Slack search query string."""
+    parts = []
+    kw = filters.get("keywords", "").strip()
+    if kw:
+        parts.append(kw)
+    sender = filters.get("sender", "").strip()
+    if sender:
+        parts.append(f"from:{sender}")
+    channel = filters.get("channel", "").strip()
+    if channel:
+        parts.append(f"in:{channel}")
+    date_from = filters.get("date_from", "").strip()
+    if date_from:
+        parts.append(f"after:{date_from}")
+    date_to = filters.get("date_to", "").strip()
+    if date_to:
+        parts.append(f"before:{date_to}")
+    return " ".join(parts) if parts else ""
+
+
+def _execute_slack_search(query: str, filters: dict, client) -> tuple[list, list]:
+    """Run search.messages and optionally search.files via the user token.
+
+    Returns (messages_list, files_list).
+    """
+    token = settings.slack_user_token
+    if not token:
+        raise RuntimeError(
+            "Slack search requires a *user token* (`SLACK_USER_TOKEN` / `xoxp-`).\n"
+            "Ask your workspace admin to set the `SLACK_USER_TOKEN` environment variable."
+        )
+
+    search_client = WebClient(token=token)
+    messages: list = []
+    files: list = []
+    file_type = filters.get("file_type", "").strip()
+
+    try:
+        if file_type:
+            # primary: file search
+            resp = search_client.search_files(query=query, count=10, sort="timestamp")
+            files = (resp.data.get("files") or {}).get("matches", [])
+        else:
+            resp = search_client.search_messages(query=query, count=10, sort="timestamp")
+            messages = (resp.data.get("messages") or {}).get("matches", [])
+    except Exception:
+        logger.exception("Slack search API error")
+        raise
+
+    return messages, files
+
+
+def _format_search_results(messages: list, files: list, user_id: str) -> str:
+    """Format Slack search results into a readable Slack message."""
+    sections: list[str] = []
+
+    if messages:
+        lines = [f"*Messages ({len(messages)} result{'s' if len(messages) != 1 else ''}):*\n"]
+        for i, m in enumerate(messages[:10], 1):
+            ch = m.get("channel", {}).get("name", "")
+            user = m.get("username", "unknown")
+            ts = m.get("ts", "")
+            text = m.get("text", "")[:200]
+            permalink = m.get("permalink", "")
+            try:
+                dt_str = _to_user_time(user_id, float(ts)).strftime("%b %d, %I:%M %p")
+            except (ValueError, OSError, TypeError):
+                dt_str = ""
+            link = f"<{permalink}|View>" if permalink else ""
+            lines.append(f"{i}. *#{ch}* — {user} ({dt_str})\n   {text}\n   {link}")
+        sections.append("\n".join(lines))
+
+    if files:
+        lines = [f"*Files ({len(files)} result{'s' if len(files) != 1 else ''}):*\n"]
+        for i, f in enumerate(files[:10], 1):
+            name = f.get("name", "unknown")
+            ftype = f.get("filetype", "")
+            user = f.get("username", "unknown")
+            permalink = f.get("permalink", "")
+            channels = ", ".join(f"#{c}" for c in (f.get("channels", []) or []))
+            link = f"<{permalink}|Open>" if permalink else ""
+            lines.append(f"{i}. `{name}` ({ftype}) — shared by {user} in {channels or 'DM'}\n   {link}")
+        sections.append("\n".join(lines))
+
+    if not sections:
+        return "No results found. Try different keywords or broader date ranges."
+
+    return "\n\n".join(sections)
+
+
 def _register_handlers(app: App):
 
     # ── /oloid-setup — admin configures Google OAuth and LLM ──
@@ -520,8 +611,8 @@ def _register_handlers(app: App):
             respond("Connect your Gmail first with `/oloid-connect-gmail`")
             return
 
-        text = command.get("text", "").strip()
-        n = int(text) if text.isdigit() else 10
+        text = re.sub(r"[^0-9]", "", command.get("text", "").strip())
+        n = int(text) if text else 10
         respond(f"Summarizing your last {n} emails...")
         try:
             result = _run_async(_get_agent().summarize_emails(user_id, n))
@@ -541,8 +632,8 @@ def _register_handlers(app: App):
             respond("Connect your Gmail first with `/oloid-connect-gmail`")
             return
 
-        text = command.get("text", "").strip()
-        n = int(text) if text.isdigit() else 10
+        text = re.sub(r"[^0-9]", "", command.get("text", "").strip())
+        n = int(text) if text else 10
         try:
             from .gmail_client import GmailClient
             from .agent import _format_email_list
@@ -930,8 +1021,8 @@ def _register_handlers(app: App):
     def handle_ease_my_life(ack, command, respond, client):
         ack()
         user_id = command["user_id"]
-        text = command.get("text", "").strip()
-        days = int(text) if text.isdigit() else 7
+        text = re.sub(r"[^0-9]", "", command.get("text", "").strip())
+        days = int(text) if text else 7
 
         respond(f"Processing your {days}-day briefing... This may take a moment.")
         try:
@@ -943,6 +1034,53 @@ def _register_handlers(app: App):
         except Exception as e:
             logger.exception("Error in /oloid-ease-my-life")
             respond(f"Error: {e}")
+
+    # ── /oloid-find — natural language Slack search ──
+
+    @app.command("/oloid-find")
+    def handle_find(ack, command, respond, client):
+        ack()
+        user_id = command["user_id"]
+        text = command.get("text", "").strip()
+
+        if not text:
+            respond(
+                "*Search Slack with natural language:*\n\n"
+                "Usage: `/oloid-find <query>`\n\n"
+                "Examples:\n"
+                "• `/oloid-find kafka memory leak`\n"
+                "• `/oloid-find pdf shared by @rahul last week`\n"
+                "• `/oloid-find image from @alex 4 months ago`\n"
+                "• `/oloid-find dashboard api design in #engineering`\n\n"
+                "_Powered by your LLM — understands dates, file types, senders, and channels._"
+            )
+            return
+
+        respond(":mag: Searching...")
+
+        try:
+            filters = _run_async(_get_agent().parse_search_query(user_id, text))
+            query_string = _build_slack_search_query(filters)
+
+            if not query_string:
+                respond("Couldn't build a search query from your input. Try rephrasing.")
+                return
+
+            file_type = filters.get("file_type", "").strip()
+            search_type = "files" if file_type else "messages"
+
+            messages, files = _execute_slack_search(query_string, filters, client)
+            result = _format_search_results(messages, files, user_id)
+
+            # Show what was searched
+            header = f"_Searched {search_type} for:_ `{query_string}`\n\n"
+            respond(header + result)
+
+        except RuntimeError as e:
+            respond(str(e))
+        except Exception as e:
+            logger.exception("Error in /oloid-find")
+            respond(f"Search failed: {e}")
 
     # ── /oloid-commands — list all available commands ──
 
@@ -969,6 +1107,7 @@ def _register_handlers(app: App):
 
             "*AI Chat*\n"
             "• `/oloid-ask <question>` — Ask anything (no Gmail needed)\n"
+            "• `/oloid-find <query>` — Search Slack with natural language\n"
             "• DM the bot — Chat directly\n"
             "• @Mention the bot — Ask in a channel\n\n"
 

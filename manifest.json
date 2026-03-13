@@ -97,6 +97,12 @@
         "should_escape": false
       },
       {
+        "command": "/oloid-find",
+        "description": "Search Slack messages and files with natural language",
+        "usage_hint": "[your search query, e.g. pdf from @rahul last week]",
+        "should_escape": false
+      },
+      {
         "command": "/oloid-commands",
         "description": "View all the current Oloid available commands",
         "should_escape": false
@@ -119,7 +125,8 @@
         "im:history",
         "im:read",
         "mpim:history",
-        "mpim:read"
+        "mpim:read",
+        "search:read"
       ],
       "bot": [
         "users:read",
