@@ -1,24 +1,25 @@
 """
-User memory system — stores behavioral insights in a private Slack channel.
-The bot creates a hidden private channel 'oloid-memory' that only it can see.
-After each interaction, the LLM analyzes and decides what to remember.
+User memory system — per-user private Slack channels.
+Each user gets a private channel (oloid-mem-{user_id_lower}) shared only
+with the bot and that user. After each interaction the LLM auto-saves
+insights; users can also add/delete memories manually via /oloid-my-memory.
 """
 
 import logging
 import threading
 
 from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
-from .config import settings
 from .user_store import user_store
 
 logger = logging.getLogger(__name__)
 
-MEMORY_CHANNEL_NAME = "oloid-memory"
-
 _client: WebClient = None
-_channel_id: str = None
+_user_channels: dict[str, str] = {}   # user_id -> channel_id (in-memory cache)
 _lock = threading.Lock()
+
+MANUAL_PREFIX = "[manual] "
 
 
 def init(client: WebClient):
@@ -26,96 +27,175 @@ def init(client: WebClient):
     _client = client
 
 
-def _ensure_channel() -> str:
-    """Create or find the private memory channel. Cache the ID."""
-    global _channel_id
-    if _channel_id:
-        return _channel_id
+# ── channel management ─────────────────────────────────────────────────────
+
+def _channel_name_for(user_id: str) -> str:
+    return f"oloid-mem-{user_id.lower()}"
+
+
+def _get_or_create_user_channel(user_id: str) -> str:
+    """Return the private memory channel ID for this user, creating it if needed."""
+    if user_id in _user_channels:
+        return _user_channels[user_id]
 
     with _lock:
-        if _channel_id:
-            return _channel_id
+        if user_id in _user_channels:
+            return _user_channels[user_id]
 
-        # Check if channel_id is stored from a previous run
-        stored_id = user_store.get_memory_channel_id()
+        stored_id = user_store.get_user_memory_channel_id(user_id)
         if stored_id:
-            _channel_id = stored_id
-            return _channel_id
+            _user_channels[user_id] = stored_id
+            return stored_id
 
-        # Try to create the private channel
+        channel_name = _channel_name_for(user_id)
+
         try:
-            resp = _client.conversations_create(
-                name=MEMORY_CHANNEL_NAME, is_private=True
-            )
-            _channel_id = resp["channel"]["id"]
-            user_store.set_memory_channel_id(_channel_id)
-            # Set channel topic for clarity
-            _client.conversations_setTopic(
-                channel=_channel_id,
-                topic="Oloid user behavior memory — do not delete",
-            )
-            logger.info("Created memory channel: %s", _channel_id)
-            return _channel_id
-        except Exception as e:
-            # Channel might already exist (name_taken error)
+            resp = _client.conversations_create(name=channel_name, is_private=True)
+            channel_id = resp["channel"]["id"]
+        except SlackApiError as e:
             if "name_taken" in str(e):
-                return _find_existing_channel()
-            logger.exception("Failed to create memory channel")
-            raise
+                channel_id = _find_channel_by_name(channel_name)
+            else:
+                raise
+
+        # Invite the user so they can see their own memories
+        try:
+            _client.conversations_invite(channel=channel_id, users=user_id)
+        except SlackApiError as e:
+            if "already_in_channel" not in str(e):
+                logger.warning("Could not invite %s to memory channel: %s", user_id, e)
+
+        try:
+            _client.conversations_setTopic(
+                channel=channel_id,
+                topic="Your Oloid memory — the bot reads this to personalize responses for you.",
+            )
+        except Exception:
+            pass
+
+        user_store.set_user_memory_channel_id(user_id, channel_id)
+        _user_channels[user_id] = channel_id
+        logger.info("Created memory channel %s for user %s", channel_id, user_id)
+        return channel_id
 
 
-def _find_existing_channel() -> str:
-    """Find the existing oloid-memory channel by listing private channels."""
-    global _channel_id
+def _find_channel_by_name(name: str) -> str:
+    resp = _client.conversations_list(types="private_channel", limit=200)
+    for ch in resp.get("channels", []):
+        if ch["name"] == name:
+            return ch["id"]
+    raise RuntimeError(f"Memory channel '{name}' exists but bot can't find it")
+
+
+def get_user_channel_id(user_id: str) -> str | None:
+    """Return the channel ID for a user's memory channel, or None on failure."""
     try:
-        resp = _client.conversations_list(types="private_channel", limit=200)
-        for ch in resp.get("channels", []):
-            if ch["name"] == MEMORY_CHANNEL_NAME:
-                _channel_id = ch["id"]
-                user_store.set_memory_channel_id(_channel_id)
-                return _channel_id
+        return _get_or_create_user_channel(user_id)
     except Exception:
-        logger.exception("Failed to find memory channel")
-    raise RuntimeError("Memory channel exists but bot can't find it")
+        return None
 
 
-def save_memory(user_id: str, note: str):
-    """Post a memory note to the private channel, tagged with user_id."""
-    if not _client or not note.strip():
-        return
-    try:
-        channel = _ensure_channel()
-        _client.chat_postMessage(
-            channel=channel,
-            text=f"[{user_id}] {note}",
-        )
-    except Exception:
-        logger.exception("Failed to save memory for %s", user_id)
+# ── read ───────────────────────────────────────────────────────────────────
 
-
-def get_memories(user_id: str, limit: int = 15) -> list[str]:
-    """Read recent memory notes for a specific user from the channel."""
+def get_memories_with_ts(user_id: str, limit: int = 30) -> list[tuple[str, str]]:
+    """Return list of (ts, text) tuples, newest-first. Skips system messages."""
     if not _client:
         return []
     try:
-        channel = _ensure_channel()
-        resp = _client.conversations_history(channel=channel, limit=200)
-        memories = []
-        tag = f"[{user_id}]"
-        for msg in resp.get("messages", []):
-            text = msg.get("text", "")
-            if text.startswith(tag):
-                memories.append(text[len(tag):].strip())
-                if len(memories) >= limit:
-                    break
-        return memories
+        channel = _get_or_create_user_channel(user_id)
+        resp = _client.conversations_history(channel=channel, limit=limit)
+        return [
+            (msg["ts"], msg.get("text", ""))
+            for msg in resp.get("messages", [])
+            if not msg.get("subtype")   # skip channel_join, topic_change, etc.
+        ]
     except Exception:
         logger.exception("Failed to read memories for %s", user_id)
         return []
 
 
+def get_memories(user_id: str, limit: int = 15) -> list[str]:
+    """Return memory texts for LLM injection (newest first)."""
+    return [text for _, text in get_memories_with_ts(user_id, limit=limit)]
+
+
+def get_split_memories(user_id: str, limit: int = 20) -> tuple[list[str], list[str]]:
+    """Return (manual_memories, auto_memories) for differentiated LLM injection."""
+    manual, auto = [], []
+    for _, text in get_memories_with_ts(user_id, limit=limit):
+        if text.startswith(MANUAL_PREFIX):
+            manual.append(text[len(MANUAL_PREFIX):].strip())
+        else:
+            auto.append(text)
+    return manual, auto
+
+
+# ── write ──────────────────────────────────────────────────────────────────
+
+def save_memory(user_id: str, note: str):
+    """Post an auto-generated memory to the user's private channel."""
+    if not _client or not note.strip():
+        return
+    try:
+        channel = _get_or_create_user_channel(user_id)
+        _client.chat_postMessage(channel=channel, text=note.strip())
+    except Exception:
+        logger.exception("Failed to save memory for %s", user_id)
+
+
+def save_manual_memory(user_id: str, note: str):
+    """Post a user-written memory prefixed with [manual]."""
+    if not _client or not note.strip():
+        return
+    try:
+        channel = _get_or_create_user_channel(user_id)
+        _client.chat_postMessage(channel=channel, text=f"{MANUAL_PREFIX}{note.strip()}")
+    except Exception:
+        logger.exception("Failed to save manual memory for %s", user_id)
+
+
+# ── delete ─────────────────────────────────────────────────────────────────
+
+def delete_memory(user_id: str, index: int) -> bool:
+    """Delete the Nth memory (1-based, newest-first order). Returns True on success."""
+    if not _client:
+        return False
+    try:
+        channel = _get_or_create_user_channel(user_id)
+        entries = get_memories_with_ts(user_id, limit=50)
+        if index < 1 or index > len(entries):
+            return False
+        ts = entries[index - 1][0]
+        _client.chat_delete(channel=channel, ts=ts)
+        return True
+    except Exception:
+        logger.exception("Failed to delete memory %d for %s", index, user_id)
+        return False
+
+
+def clear_memories(user_id: str) -> int:
+    """Delete all memories for a user. Returns count deleted."""
+    if not _client:
+        return 0
+    deleted = 0
+    try:
+        channel = _get_or_create_user_channel(user_id)
+        entries = get_memories_with_ts(user_id, limit=100)
+        for ts, _ in entries:
+            try:
+                _client.chat_delete(channel=channel, ts=ts)
+                deleted += 1
+            except Exception:
+                pass
+    except Exception:
+        logger.exception("Failed to clear memories for %s", user_id)
+    return deleted
+
+
+# ── auto-memory (background LLM analysis) ─────────────────────────────────
+
 def analyze_and_remember(user_id: str, user_message: str, bot_response: str):
-    """Background task: ask LLM what to remember, then save it."""
+    """Background task: ask LLM what to remember, then auto-save it."""
     import asyncio
     from .agent import _get_llm_for_user
     from .llm.prompts import MEMORY_ANALYSIS_PROMPT

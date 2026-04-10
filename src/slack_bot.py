@@ -600,6 +600,92 @@ def _register_handlers(app: App):
         display_model = model or get_default_model(provider)
         respond(f"Your LLM set to `{provider}` / `{display_model}`")
 
+    # ── /oloid-my-memory ──
+
+    @app.command("/oloid-my-memory")
+    def handle_my_memory(ack, command, respond):
+        ack()
+        from . import memory as mem
+
+        user_id = command["user_id"]
+        text = command.get("text", "").strip()
+
+        # ── list (no args) ──
+        if not text or text.lower() in ("list", "show"):
+            entries = mem.get_memories_with_ts(user_id, limit=30)
+            channel_id = mem.get_user_channel_id(user_id)
+            channel_link = f"<#{channel_id}>" if channel_id else "_unavailable_"
+
+            if not entries:
+                respond(
+                    f"*Your Oloid Memory*\n\n"
+                    f"No memories yet. The bot learns from your interactions automatically.\n"
+                    f"You can also add your own: `/oloid-my-memory add I prefer bullet points`\n\n"
+                    f"_Your memory channel: {channel_link}_"
+                )
+                return
+
+            lines = []
+            for i, (_, text_) in enumerate(entries, 1):
+                tag = " _(manual)_" if text_.startswith(mem.MANUAL_PREFIX) else ""
+                clean = text_[len(mem.MANUAL_PREFIX):].strip() if text_.startswith(mem.MANUAL_PREFIX) else text_
+                lines.append(f"{i}. {clean}{tag}")
+
+            respond(
+                f"*Your Oloid Memory* ({len(entries)} entries)\n\n"
+                + "\n".join(lines)
+                + f"\n\n_To delete: `/oloid-my-memory delete <number>`_\n"
+                f"_To add: `/oloid-my-memory add <text>`_\n"
+                f"_To clear all: `/oloid-my-memory clear`_\n"
+                f"_Your memory channel: {channel_link}_"
+            )
+            return
+
+        parts = text.split(None, 1)
+        sub = parts[0].lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        # ── add ──
+        if sub == "add":
+            if not arg:
+                respond("Usage: `/oloid-my-memory add <text>`\nExample: `/oloid-my-memory add I prefer concise bullet points`")
+                return
+            mem.save_manual_memory(user_id, arg)
+            respond(f"Memory saved: _{arg}_\n\nThe bot will use this to personalize future responses.")
+            return
+
+        # ── delete ──
+        if sub == "delete":
+            if not arg.isdigit():
+                respond("Usage: `/oloid-my-memory delete <number>`\nRun `/oloid-my-memory` to see the numbered list.")
+                return
+            idx = int(arg)
+            entries = mem.get_memories_with_ts(user_id, limit=50)
+            if idx < 1 or idx > len(entries):
+                respond(f"No memory #{idx}. You have {len(entries)} memories. Run `/oloid-my-memory` to see them.")
+                return
+            _, deleted_text = entries[idx - 1]
+            clean = deleted_text[len(mem.MANUAL_PREFIX):].strip() if deleted_text.startswith(mem.MANUAL_PREFIX) else deleted_text
+            if mem.delete_memory(user_id, idx):
+                respond(f"Deleted memory #{idx}: _{clean}_")
+            else:
+                respond(f"Could not delete memory #{idx}. Please try again.")
+            return
+
+        # ── clear ──
+        if sub == "clear":
+            count = mem.clear_memories(user_id)
+            respond(f"Cleared {count} memories. Starting fresh.")
+            return
+
+        respond(
+            "*Usage:*\n"
+            "• `/oloid-my-memory` — view all memories\n"
+            "• `/oloid-my-memory add <text>` — add a manual memory\n"
+            "• `/oloid-my-memory delete <number>` — delete by number\n"
+            "• `/oloid-my-memory clear` — clear all memories"
+        )
+
     # ── /oloid-summarize ──
 
     @app.command("/oloid-summarize")
@@ -1169,6 +1255,12 @@ def _register_handlers(app: App):
             "• `/oloid-remind [message] in [time]` — Set a reminder (DM at specified time)\n"
             "• `/oloid-reminders` — View pending reminders\n"
             "• `/oloid-reminders cancel <id>` — Cancel a reminder\n\n"
+
+            "*Memory*\n"
+            "• `/oloid-my-memory` — View your personalized memory\n"
+            "• `/oloid-my-memory add <text>` — Add a manual preference (e.g. _I prefer bullet points_)\n"
+            "• `/oloid-my-memory delete <number>` — Delete a memory by number\n"
+            "• `/oloid-my-memory clear` — Clear all memories\n\n"
 
             "*Settings*\n"
             "• `/oloid-mysettings` — View your current configuration\n\n"

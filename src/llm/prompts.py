@@ -102,29 +102,54 @@ def build_search_query_parse_prompt(today: str) -> str:
     )
 
 
-def build_chat_prompt_with_memory(memories: list[str]) -> str:
-    """Build a personalized system prompt by injecting user memories."""
-    if not memories:
+def _build_memory_block(manual: list[str], auto: list[str]) -> str:
+    """Combine manual instructions and auto-observed facts into a memory block."""
+    parts = []
+    if manual:
+        instructions = "\n".join(f"- {m}" for m in manual)
+        parts.append(
+            f"The user has explicitly set these preferences — follow them strictly:\n{instructions}"
+        )
+    if auto:
+        observations = "\n".join(f"- {m}" for m in auto)
+        parts.append(
+            f"You have observed the following about this user — use to personalize subtly:\n{observations}"
+        )
+    return "\n\n".join(parts)
+
+
+def build_chat_prompt_with_memory(
+    memories: list[str] | None = None,
+    manual: list[str] | None = None,
+    auto: list[str] | None = None,
+) -> str:
+    """Build a personalized system prompt by injecting user memories.
+
+    Accepts either the old-style flat ``memories`` list or the new split
+    ``manual`` / ``auto`` lists produced by ``memory.get_split_memories``.
+    """
+    if manual is None and auto is None:
+        # Legacy path: flat list, treat all as auto
+        manual, auto = [], memories or []
+
+    if not manual and not auto:
         return CHAT_SYSTEM_PROMPT
 
-    memory_block = "\n".join(f"- {m}" for m in memories)
-    return (
-        f"{CHAT_SYSTEM_PROMPT}\n\n"
-        f"You know the following about this user (use this to personalize your "
-        f"responses, but don't mention that you have these notes):\n"
-        f"{memory_block}"
-    )
+    block = _build_memory_block(manual, auto)
+    return f"{CHAT_SYSTEM_PROMPT}\n\n{block}"
 
 
-def build_email_prompt_with_memory(memories: list[str]) -> str:
+def build_email_prompt_with_memory(
+    memories: list[str] | None = None,
+    manual: list[str] | None = None,
+    auto: list[str] | None = None,
+) -> str:
     """Build a personalized email QA prompt by injecting user memories."""
-    if not memories:
+    if manual is None and auto is None:
+        manual, auto = [], memories or []
+
+    if not manual and not auto:
         return EMAIL_QA_SYSTEM_PROMPT
 
-    memory_block = "\n".join(f"- {m}" for m in memories)
-    return (
-        f"{EMAIL_QA_SYSTEM_PROMPT}\n\n"
-        f"You know the following about this user (use this to personalize your "
-        f"responses, but don't mention that you have these notes):\n"
-        f"{memory_block}"
-    )
+    block = _build_memory_block(manual, auto)
+    return f"{EMAIL_QA_SYSTEM_PROMPT}\n\n{block}"

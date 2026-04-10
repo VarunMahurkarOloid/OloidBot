@@ -9,10 +9,13 @@ otherwise falls back to local JSON file (for local dev).
 """
 
 import json
+import logging
 import os
 import threading
 import time
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from .encryption import decrypt, encrypt
 
@@ -88,6 +91,17 @@ class _JsonUserStore:
 
     def get_memory_channel_id(self) -> str:
         return self._data.get("__admin__", {}).get("memory_channel_id", "")
+
+    # ── per-user: memory channel ──
+
+    def set_user_memory_channel_id(self, slack_user_id: str, channel_id: str):
+        with self._lock:
+            user = self._data.setdefault(slack_user_id, {})
+            user["memory_channel_id"] = channel_id
+            self._save()
+
+    def get_user_memory_channel_id(self, slack_user_id: str) -> str:
+        return self.get_user(slack_user_id).get("memory_channel_id", "")
 
     # ── per-user: Gmail token ──
 
@@ -342,6 +356,29 @@ class _SupabaseUserStore:
         if not row.data:
             return ""
         return row.data[0].get("memory_channel_id", "") or ""
+
+    # ── per-user: memory channel ──
+    # Requires: ALTER TABLE users ADD COLUMN IF NOT EXISTS memory_channel_id TEXT;
+
+    def set_user_memory_channel_id(self, slack_user_id: str, channel_id: str):
+        self._ensure_user(slack_user_id)
+        try:
+            self._sb.table("users").update({
+                "memory_channel_id": channel_id,
+            }).eq("slack_user_id", slack_user_id).execute()
+        except Exception:
+            logger.warning("Could not persist memory_channel_id for %s (run migration)", slack_user_id)
+
+    def get_user_memory_channel_id(self, slack_user_id: str) -> str:
+        try:
+            row = self._sb.table("users").select("memory_channel_id").eq(
+                "slack_user_id", slack_user_id
+            ).execute()
+            if not row.data:
+                return ""
+            return row.data[0].get("memory_channel_id", "") or ""
+        except Exception:
+            return ""
 
     # ── per-user: Gmail token ──
 

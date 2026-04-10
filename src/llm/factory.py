@@ -30,17 +30,11 @@ class LLMFactory:
         from .anthropic_llm import AnthropicLLM
         from .gemini_llm import GeminiLLM
         from .groq_llm import GroqLLM
-        from .mistral_llm import MistralLLM
-        from .cohere_llm import CohereLLM
-        from .ollama_llm import OllamaLLM
 
         cls.register("openai", OpenAILLM)
         cls.register("anthropic", AnthropicLLM)
         cls.register("gemini", GeminiLLM)
         cls.register("groq", GroqLLM)
-        cls.register("mistral", MistralLLM)
-        cls.register("cohere", CohereLLM)
-        cls.register("ollama", OllamaLLM)
 
     @classmethod
     def available_providers(cls) -> list[str]:

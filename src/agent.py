@@ -68,13 +68,13 @@ def _get_llm_for_user(slack_user_id: str):
     )
 
 
-def _load_memories(user_id: str) -> list[str]:
-    """Load user memories from the private Slack channel."""
+def _load_memories(user_id: str) -> tuple[list[str], list[str]]:
+    """Return (manual, auto) memory lists for this user."""
     try:
         from . import memory
-        return memory.get_memories(user_id, limit=15)
+        return memory.get_split_memories(user_id, limit=20)
     except Exception:
-        return []
+        return [], []
 
 
 def _remember(user_id: str, user_message: str, bot_response: str):
@@ -117,8 +117,8 @@ class EmailAgent:
 
     async def general_chat(self, user_id: str, text: str) -> str:
         """General AI chat — works without Gmail. Personalized with memory."""
-        memories = _load_memories(user_id)
-        system = build_chat_prompt_with_memory(memories)
+        manual, auto = _load_memories(user_id)
+        system = build_chat_prompt_with_memory(manual=manual, auto=auto)
 
         self._history[user_id].append({"role": "user", "content": text})
         messages = self._history[user_id][-10:]
@@ -157,8 +157,8 @@ class EmailAgent:
         if not emails:
             return "No emails found matching your query."
 
-        memories = _load_memories(user_id)
-        system = build_email_prompt_with_memory(memories)
+        manual, auto = _load_memories(user_id)
+        system = build_email_prompt_with_memory(manual=manual, auto=auto)
 
         emails_text = "\n---\n".join(_format_email_for_llm(e) for e in emails)
         llm = _get_llm_for_user(user_id)
@@ -176,8 +176,8 @@ class EmailAgent:
         if not emails:
             return "No new emails in the last 24 hours."
 
-        memories = _load_memories(user_id)
-        system = build_email_prompt_with_memory(memories)
+        manual, auto = _load_memories(user_id)
+        system = build_email_prompt_with_memory(manual=manual, auto=auto)
 
         emails_text = "\n---\n".join(_format_email_for_llm(e) for e in emails)
         llm = _get_llm_for_user(user_id)

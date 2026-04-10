@@ -98,8 +98,14 @@
       },
       {
         "command": "/oloid-find",
-        "description": "Search Slack messages and files with natural language",
+        "description": "Search any Slack messages from 1D, 1W, 1Y, 1Decade using simple language. Warning: use it wisely since LLM is the wrapper over the conversation so it can read",
         "usage_hint": "[@user / #channel / all] [query]",
+        "should_escape": false
+      },
+      {
+        "command": "/oloid-my-memory",
+        "description": "View, add, or delete your personal Oloid memory",
+        "usage_hint": "[add <text>] | [delete <number>] | [clear]",
         "should_escape": false
       },
       {

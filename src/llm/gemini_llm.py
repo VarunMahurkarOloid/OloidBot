@@ -1,4 +1,5 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from .base import BaseLLM
 from .prompts import CHAT_SYSTEM_PROMPT
@@ -7,19 +8,22 @@ from .prompts import CHAT_SYSTEM_PROMPT
 class GeminiLLM(BaseLLM):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        genai.configure(api_key=self.api_key)
+        self._client = genai.Client(api_key=self.api_key)
 
     async def chat(self, messages: list[dict], system: str = "") -> str:
-        model = genai.GenerativeModel(self.model, system_instruction=system or CHAT_SYSTEM_PROMPT)
-        history = []
-        last_content = ""
-        for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            if msg == messages[-1]:
-                last_content = msg["content"]
-            else:
-                history.append({"role": role, "parts": [msg["content"]]})
-
-        chat = model.start_chat(history=history)
-        resp = await chat.send_message_async(last_content)
+        contents = [
+            types.Content(
+                role="user" if msg["role"] == "user" else "model",
+                parts=[types.Part(text=msg["content"])],
+            )
+            for msg in messages
+        ]
+        config = types.GenerateContentConfig(
+            system_instruction=system or CHAT_SYSTEM_PROMPT,
+        )
+        resp = await self._client.aio.models.generate_content(
+            model=self.model,
+            contents=contents,
+            config=config,
+        )
         return resp.text
